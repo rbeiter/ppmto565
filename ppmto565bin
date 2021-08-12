@@ -1,0 +1,86 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+my $fn;
+my $f;
+my ($r, $b, $g);
+my $str;
+my ($w,$h);
+my $depth;
+my @pixels;
+use Getopt::Long;
+my $opt_varname="img";
+my $opt_help;
+my $verbose=0;
+GetOptions(
+	"v|verbose+" => \$verbose,
+	"h|help" => \$opt_help,
+) or die("Error in command line arguments\n");
+
+if ($opt_help) {
+	print <<EOT;
+Usage: ppmto565bin [options] [input]
+Generates a RGB 16-bit data file in 565 format for use on an LCD display.
+We generate binary instead of a header file format to support placement
+as files, e.g. on an espressif spiffs partition.
+
+As its name states, it requires PPM input (magic P6 in the file); this means,
+if you're converting a greyscale or bw image with, say, pngtopnm, the output
+will likely be rejected by this program (because it'll probably be in pbm
+or pgm format).  See the 'netpbm' package of utilities.
+
+Options:
+  -h, --help           This help
+
+Examples:
+  ppmto565bin someimage.ppm > someimage.bin
+     Outputs binary image data.
+  pngtopnm file.png | ppmto565bin > someimage.bin
+     Outputs binary image data using converted png as input.
+EOT
+	exit;
+}
+
+if ($#ARGV > -1) {
+	my $fn = shift @ARGV;
+	print STDERR "Using $fn\n";
+	open($f, "<", "$fn") || die "Can't open $fn: $!";
+} else {
+	$f = *STDIN;
+}
+$str = <$f>;
+die "Not ppm format" if $str !~ /^P6\s*$/;
+$str = <$f>;
+($w,$h) = ($str =~ /^(\d+)\s+(\d+)\s*$/);
+die "Not ppm format (line 2)" if !defined $h;
+$str = <$f>;
+($depth) = ($str =~ /^(\d+)\s*$/);
+die "Not ppm format (line 3)" if !defined $depth;
+#die "Color depth too deep for current board (depth = ($depth) is > 15)"
+# if $depth > 15;
+while (read($f, $r, 1) && read($f, $g, 1) && read($f, $b, 1)) {
+	printf STDERR ("%d-%d-%d\n", ord $r, ord $g, ord $b) if $verbose>0;
+	push(@pixels, [ord $r,ord $g,ord $b]);
+}
+die "Invalid pixel count. Num pixels (".scalar(@pixels).") != ${w}x{$h} (" . $w*$h . ")"
+	if @pixels != $w*$h;
+for my $y (0 .. $h-1) {
+	for my $x (0 .. $w-1) {
+		my $p = $pixels[$y*$w + $x];
+		$r = $p->[0];
+		$g = $p->[1];
+		$b = $p->[2];
+		#$r = 0;
+		#$g = 0;
+		#$b = 0;
+		printf STDERR ("Converting %d %d %d at depth $depth ==> ", $r, $g, $b)
+			if $verbose>0;
+		my $int = int( (($r & 0b11111000) << 8) | (($g & 0b11111100) << 3) | (($b & 0b11111000) >> 3) ) << 0;
+		printf STDERR ("$int -> 0x%x\n", $int) if $verbose>0;
+		printf("%c%c", $int>>8 & 0xFF, $int & 0xFF);
+    #printf("%c%c", $int & 0xFF, $int>>8 & 0xFF);
+		#printf("0x%x%x%xF", ord($p->[0]), ord($p->[1]), ord($p->[2]));
+		#printf("0x%x%x%x%x", 0, 0xF, 0, 0);
+	}
+}
+close $f;
